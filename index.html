@@ -592,250 +592,208 @@ function monthStr(ym){const[y,m]=ym.split('-');return`${MONTHS[+m-1]} ${y}`}
 // ══════════════════════════════════════════
 // LOCK / PIN / BIOMETRIA
 // ══════════════════════════════════════════
-const LOCK_KEY   = 'finvault_pin';
-const BIO_KEY    = 'finvault_bio_enabled';
-const SESSION_KEY= 'finvault_unlocked';
+const LOCK_KEY = 'finvault_pin';
+const BIO_KEY  = 'finvault_bio_enabled';
 
-let lockPin     = '';   // PIN digitado agora
-let setupStep   = 0;    // 0=nenhum, 1=primeiro dígito, 2=confirmação
-let setupFirst  = '';   // PIN digitado na 1ª etapa do setup
-let bioEnabled  = false;
+let lockPin    = '';
+let setupStep  = 0;
+let setupFirst = '';
 
 function getStoredPin(){ return localStorage.getItem(LOCK_KEY)||null; }
-function isSessionUnlocked(){ return sessionStorage.getItem(SESSION_KEY)==='1'; }
-function setSessionUnlocked(){ sessionStorage.setItem(SESSION_KEY,'1'); }
 
+// ── RENDERIZAÇÃO ──
 function renderLockSetup(){
+  lockPin=''; setupFirst='';
   const box = document.getElementById('lockBox');
   box.innerHTML = `
     <div class="lock-brand">Fin<em>Vault</em></div>
-    <div class="setup-area">
-      <strong>Defina seu PIN de 4 dígitos</strong>
-      Ele será pedido toda vez que você abrir o app.
-    </div>
-    <div class="pin-dots">
-      <div class="pin-dot" id="sd0"></div>
-      <div class="pin-dot" id="sd1"></div>
-      <div class="pin-dot" id="sd2"></div>
-      <div class="pin-dot" id="sd3"></div>
-    </div>
-    <div class="lock-error" id="setupErr"></div>
-    <div class="pin-grid" id="setupGrid"></div>
+    <div class="setup-area"><strong>Defina seu PIN de 4 dígitos</strong>Ele será pedido toda vez que abrir o app.</div>
+    <div class="pin-dots" id="pinDots"></div>
+    <div class="lock-error" id="lockErr"></div>
+    <div class="pin-grid" id="pinGrid"></div>
   `;
-  renderPinGrid('setupGrid', pressSetupKey);
+  buildDots(4,'pinDots');
+  buildGrid('pinGrid', handleSetupKey);
 }
 
 function renderLockConfirm(){
+  lockPin='';
   const box = document.getElementById('lockBox');
   box.innerHTML = `
     <div class="lock-brand">Fin<em>Vault</em></div>
-    <div class="setup-area">
-      <strong>Confirme seu PIN</strong>
-      Digite o mesmo PIN novamente.
-    </div>
-    <div class="pin-dots">
-      <div class="pin-dot" id="sd0"></div>
-      <div class="pin-dot" id="sd1"></div>
-      <div class="pin-dot" id="sd2"></div>
-      <div class="pin-dot" id="sd3"></div>
-    </div>
-    <div class="lock-error" id="setupErr"></div>
-    <div class="pin-grid" id="setupGrid"></div>
+    <div class="setup-area"><strong>Confirme seu PIN</strong>Digite o mesmo PIN novamente.</div>
+    <div class="pin-dots" id="pinDots"></div>
+    <div class="lock-error" id="lockErr"></div>
+    <div class="pin-grid" id="pinGrid"></div>
   `;
-  renderPinGrid('setupGrid', pressConfirmKey);
+  buildDots(4,'pinDots');
+  buildGrid('pinGrid', handleConfirmKey);
 }
 
 function renderLockScreen(){
-  const box = document.getElementById('lockBox');
+  lockPin='';
   const hasBio = localStorage.getItem(BIO_KEY)==='1';
+  const box = document.getElementById('lockBox');
   box.innerHTML = `
     <div class="lock-brand">Fin<em>Vault</em></div>
     <div class="lock-title">Digite seu PIN</div>
-    <div class="pin-dots">
-      <div class="pin-dot" id="ld0"></div>
-      <div class="pin-dot" id="ld1"></div>
-      <div class="pin-dot" id="ld2"></div>
-      <div class="pin-dot" id="ld3"></div>
-    </div>
+    <div class="pin-dots" id="pinDots"></div>
     <div class="lock-error" id="lockErr"></div>
-    <div class="pin-grid" id="lockGrid"></div>
-    ${hasBio ? `<button class="bio-btn" onclick="tryBiometria()">🪪 Usar digital / Face ID</button>` : ''}
+    <div class="pin-grid" id="pinGrid"></div>
   `;
-  renderPinGrid('lockGrid', pressLockKey);
-  lockPin = '';
-  if(hasBio) tryBiometria();
+  buildDots(4,'pinDots');
+  buildGrid('pinGrid', handleUnlockKey);
+  if(hasBio){
+    const bioBtn = document.createElement('button');
+    bioBtn.className='bio-btn';
+    bioBtn.textContent='🪪 Usar digital / Face ID';
+    bioBtn.addEventListener('click', tryBiometria);
+    document.getElementById('lockBox').appendChild(bioBtn);
+    tryBiometria();
+  }
 }
 
-function renderPinGrid(containerId, handler){
+function renderOfferBio(){
+  const box = document.getElementById('lockBox');
+  box.innerHTML = `
+    <div class="lock-brand">Fin<em>Vault</em></div>
+    <div class="setup-area"><strong>PIN criado! ✓</strong>Quer usar digital ou Face ID para entrar mais rápido?</div>
+  `;
+  const b1 = document.createElement('button');
+  b1.className='bio-btn'; b1.textContent='🪪 Ativar biometria';
+  b1.addEventListener('click', enableBio);
+  const b2 = document.createElement('button');
+  b2.className='bio-btn'; b2.style.cssText='color:var(--muted);border-color:var(--line)';
+  b2.textContent='Não, só PIN';
+  b2.addEventListener('click', unlock);
+  box.appendChild(b1); box.appendChild(b2);
+}
+
+// ── CONSTRUTORES ──
+function buildDots(n, containerId){
+  const wrap = document.getElementById(containerId);
+  wrap.innerHTML='';
+  for(let i=0;i<n;i++){
+    const d=document.createElement('div');
+    d.className='pin-dot'; d.id='dot'+i;
+    wrap.appendChild(d);
+  }
+}
+
+function buildGrid(containerId, handler){
   const grid = document.getElementById(containerId);
+  grid.innerHTML='';
   const keys = ['1','2','3','4','5','6','7','8','9','','0','⌫'];
-  grid.innerHTML = keys.map(k => {
-    if(k==='') return `<div></div>`;
-    if(k==='⌫') return `<button class="pin-key key-del" onclick="${handler.name}('del')">${k}</button>`;
-    return `<button class="pin-key" onclick="${handler.name}('${k}')">${k}</button>`;
-  }).join('');
+  keys.forEach(k => {
+    if(k===''){
+      const empty=document.createElement('div'); grid.appendChild(empty); return;
+    }
+    const btn = document.createElement('button');
+    btn.className = 'pin-key' + (k==='⌫' ? ' key-del' : '');
+    btn.textContent = k;
+    btn.addEventListener('pointerdown', e=>{ e.preventDefault(); handler(k==='⌫'?'del':k); });
+    grid.appendChild(btn);
+  });
 }
 
-// ── SETUP ──
-window.pressSetupKey = function(k){
-  if(k==='del'){ setupFirst=setupFirst.slice(0,-1); updateSetupDots(); return; }
-  if(setupFirst.length>=4) return;
-  setupFirst += k;
-  updateSetupDots();
-  if(setupFirst.length===4){ setTimeout(()=>{ setupStep=2; lockPin=''; renderLockConfirm(); },200); }
-};
+function updateDots(val){
+  for(let i=0;i<4;i++){
+    const d=document.getElementById('dot'+i);
+    if(d){ d.classList.remove('error'); d.classList.toggle('filled', i<val.length); }
+  }
+}
 
-window.pressConfirmKey = function(k){
-  if(k==='del'){ lockPin=lockPin.slice(0,-1); updateSetupDots(); return; }
+function showErr(msg){
+  const e=document.getElementById('lockErr');
+  if(e) e.textContent=msg;
+}
+
+// ── HANDLERS ──
+function handleSetupKey(k){
+  if(k==='del'){ setupFirst=setupFirst.slice(0,-1); updateDots(setupFirst); return; }
+  if(setupFirst.length>=4) return;
+  setupFirst+=k; updateDots(setupFirst);
+  if(setupFirst.length===4){ setTimeout(()=>{ setupStep=2; renderLockConfirm(); },200); }
+}
+
+function handleConfirmKey(k){
+  if(k==='del'){ lockPin=lockPin.slice(0,-1); updateDots(lockPin); return; }
   if(lockPin.length>=4) return;
-  lockPin += k;
-  updateSetupDots();
+  lockPin+=k; updateDots(lockPin);
   if(lockPin.length===4){
     if(lockPin===setupFirst){
       localStorage.setItem(LOCK_KEY, lockPin);
-      offerBiometria();
+      renderOfferBio();
     } else {
-      document.getElementById('setupErr').textContent='PINs diferentes. Tente de novo.';
-      setTimeout(()=>{ lockPin=''; setupFirst=''; setupStep=1; renderLockSetup(); },900);
+      showErr('PINs diferentes. Tente de novo.');
+      for(let i=0;i<4;i++){ const d=document.getElementById('dot'+i); if(d) d.classList.add('error'); }
+      setTimeout(()=>{ setupStep=1; renderLockSetup(); },900);
     }
-  }
-};
-
-function updateSetupDots(){
-  const val = setupStep===2 ? lockPin : setupFirst;
-  for(let i=0;i<4;i++){
-    const d=document.getElementById('sd'+i);
-    if(d) d.classList.toggle('filled', i<val.length);
   }
 }
 
-// ── UNLOCK ──
-window.pressLockKey = function(k){
-  if(k==='del'){ lockPin=lockPin.slice(0,-1); updateLockDots(); return; }
+function handleUnlockKey(k){
+  if(k==='del'){ lockPin=lockPin.slice(0,-1); updateDots(lockPin); return; }
   if(lockPin.length>=4) return;
-  lockPin += k;
-  updateLockDots();
+  lockPin+=k; updateDots(lockPin);
   if(lockPin.length===4) checkPin();
-};
-
-function updateLockDots(){
-  for(let i=0;i<4;i++){
-    const d=document.getElementById('ld'+i);
-    if(d) d.classList.toggle('filled', i<lockPin.length);
-  }
 }
 
 function checkPin(){
-  const stored = getStoredPin();
-  if(lockPin===stored){
+  if(lockPin===getStoredPin()){
     unlock();
   } else {
-    for(let i=0;i<4;i++){
-      const d=document.getElementById('ld'+i);
-      if(d){ d.classList.remove('filled'); d.classList.add('error'); }
-    }
-    const err=document.getElementById('lockErr');
-    if(err) err.textContent='PIN incorreto';
-    setTimeout(()=>{
-      lockPin='';
-      for(let i=0;i<4;i++){
-        const d=document.getElementById('ld'+i);
-        if(d){ d.classList.remove('error'); }
-      }
-      if(err) err.textContent='';
-    },700);
+    for(let i=0;i<4;i++){ const d=document.getElementById('dot'+i); if(d){ d.classList.remove('filled'); d.classList.add('error'); }}
+    showErr('PIN incorreto');
+    setTimeout(()=>{ lockPin=''; renderLockScreen(); },800);
   }
 }
 
 function unlock(){
-  setSessionUnlocked();
   const ls=document.getElementById('lockScreen');
-  ls.style.opacity='0';
-  ls.style.transition='opacity .3s';
+  ls.style.opacity='0'; ls.style.transition='opacity .3s';
   setTimeout(()=>{ ls.style.display='none'; ls.style.opacity=''; ls.style.transition=''; },300);
 }
 
 // ── BIOMETRIA ──
-async function offerBiometria(){
-  const box=document.getElementById('lockBox');
-  box.innerHTML=`
-    <div class="lock-brand">Fin<em>Vault</em></div>
-    <div class="setup-area">
-      <strong>PIN criado! ✓</strong>
-      Quer usar digital ou Face ID para entrar mais rápido?
-    </div>
-    <button class="bio-btn" onclick="enableBio()">🪪 Ativar biometria</button>
-    <button class="bio-btn" style="color:var(--muted);border-color:var(--line)" onclick="unlock()">Não, só PIN</button>
-  `;
-}
-
-window.enableBio = async function(){
+async function enableBio(){
   const ok = await tryRegisterBio();
-  if(ok){
-    localStorage.setItem(BIO_KEY,'1');
-    unlock();
-  } else {
-    unlock();
-  }
-};
+  if(ok) localStorage.setItem(BIO_KEY,'1');
+  unlock();
+}
 
 async function tryRegisterBio(){
   if(!window.PublicKeyCredential) return false;
   try{
-    const challenge = new Uint8Array(32);
-    crypto.getRandomValues(challenge);
-    const cred = await navigator.credentials.create({
-      publicKey:{
-        challenge,
-        rp:{name:'FinVault',id:location.hostname||'localhost'},
-        user:{id:new Uint8Array(16),name:'finvault-user',displayName:'FinVault'},
-        pubKeyCredParams:[{type:'public-key',alg:-7},{type:'public-key',alg:-257}],
-        authenticatorSelection:{userVerification:'required'},
-        timeout:30000
-      }
-    });
-    if(cred){
-      localStorage.setItem('finvault_bio_id', btoa(String.fromCharCode(...new Uint8Array(cred.rawId))));
-      return true;
-    }
+    const challenge=new Uint8Array(32); crypto.getRandomValues(challenge);
+    const cred = await navigator.credentials.create({publicKey:{
+      challenge,
+      rp:{name:'FinVault',id:location.hostname||'localhost'},
+      user:{id:new Uint8Array(16),name:'finvault-user',displayName:'FinVault'},
+      pubKeyCredParams:[{type:'public-key',alg:-7},{type:'public-key',alg:-257}],
+      authenticatorSelection:{userVerification:'required'},timeout:30000
+    }});
+    if(cred){ localStorage.setItem('finvault_bio_id', btoa(String.fromCharCode(...new Uint8Array(cred.rawId)))); return true; }
   }catch(e){}
   return false;
 }
 
-window.tryBiometria = async function(){
+async function tryBiometria(){
   if(!window.PublicKeyCredential) return;
   try{
-    const challenge = new Uint8Array(32);
-    crypto.getRandomValues(challenge);
-    const storedId = localStorage.getItem('finvault_bio_id');
-    const allowCreds = storedId ? [{
-      id: Uint8Array.from(atob(storedId), c=>c.charCodeAt(0)),
-      type:'public-key'
-    }] : [];
-    const assertion = await navigator.credentials.get({
-      publicKey:{
-        challenge,
-        allowCredentials: allowCreds,
-        userVerification:'required',
-        timeout:30000
-      }
-    });
+    const challenge=new Uint8Array(32); crypto.getRandomValues(challenge);
+    const storedId=localStorage.getItem('finvault_bio_id');
+    const allowCreds=storedId?[{id:Uint8Array.from(atob(storedId),c=>c.charCodeAt(0)),type:'public-key'}]:[];
+    const assertion=await navigator.credentials.get({publicKey:{challenge,allowCredentials:allowCreds,userVerification:'required',timeout:30000}});
     if(assertion) unlock();
   }catch(e){}
-};
+}
 
 // ── INIT LOCK ──
 function initLock(){
-  const stored = getStoredPin();
-  if(!stored){
-    setupStep=1; setupFirst=''; lockPin='';
-    renderLockSetup();
-  } else if(isSessionUnlocked()){
-    document.getElementById('lockScreen').style.display='none';
-  } else {
-    lockPin='';
-    renderLockScreen();
-  }
+  const stored=getStoredPin();
+  if(!stored){ setupStep=1; renderLockSetup(); }
+  else { renderLockScreen(); }
 }
 
 initLock();

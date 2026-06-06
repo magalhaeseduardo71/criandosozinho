@@ -783,7 +783,7 @@ const QUOTES=[
 ];
 
 let state={currentMonth:null,despesas:{},receitas:{},savings:{plan:null,deposits:[]},quoteIndex:0};
-let fbDB=null,fbRef=null;
+let fbDB=null,fbRef=null,fbSet=null;
 
 const MONTHS=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 const catIcons={moradia:'🏠',alimentacao:'🍽',transporte:'🚗',saude:'❤',lazer:'🎮',educacao:'📚',outros:'📦'};
@@ -833,10 +833,9 @@ function loadLocal(){
 function saveLocal(){localStorage.setItem('finvault_v2',JSON.stringify({despesas:state.despesas,receitas:state.receitas,savings:state.savings,quoteIndex:state.quoteIndex}))}
 function saveData(){
   saveLocal();
-  if(fbDB&&fbRef){
-    import('https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js').then(({set})=>{
-      set(fbRef,{despesas:state.despesas,receitas:state.receitas,savings:state.savings}).catch(()=>{});
-    });
+  if(fbSet&&fbRef){
+    fbSet(fbRef,{despesas:state.despesas,receitas:state.receitas,savings:state.savings})
+      .catch(e=>console.error('Firebase save error:',e));
   }
 }
 
@@ -1180,7 +1179,7 @@ window.connectFirebase=async function(){
     const{initializeApp,getApps}=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js');
     const{getDatabase,ref,onValue,set}=await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js');
     const app=getApps().length?getApps()[0]:initializeApp(config);
-    fbDB=getDatabase(app);fbRef=ref(fbDB,'finvault/data');
+    fbDB=getDatabase(app);fbRef=ref(fbDB,'finvault/data');fbSet=set;
     onValue(fbRef,snap=>{
       if(snap.exists()){
         const d=snap.val();

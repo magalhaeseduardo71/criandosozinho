@@ -389,6 +389,19 @@ select option{background:var(--bg2)}
             <div><label class="f-label">Descrição</label><input id="rNome" type="text" placeholder="Salário, Freelance…"></div>
             <div><label class="f-label">Valor R$</label><input id="rValor" type="number" placeholder="0,00" step="0.01"></div>
           </div>
+          <div class="form-grid fg4">
+            <div>
+              <label class="f-label">Tipo</label>
+              <select id="rTipo" onchange="toggleParcR()">
+                <option value="fixo">Fixo mensal</option>
+                <option value="parcelado">Parcelado</option>
+                <option value="unico">Único</option>
+              </select>
+            </div>
+            <div id="rParcWrap" style="opacity:0.4"><label class="f-label">Parcelas</label><input id="rParcelas" type="number" value="1" min="1" max="120"></div>
+            <div><label class="f-label">Início</label><input id="rInicio" type="month"></div>
+            <div id="rTerminoWrap"><label class="f-label">Término <span style="color:var(--faint);font-size:9px">(vazio = sem fim)</span></label><input id="rTermino" type="month"></div>
+          </div>
           <div class="drawer-footer">
             <button class="btn btn-ghost btn-sm" onclick="toggleDrawer('drawerRec')">Cancelar</button>
             <button class="btn btn-primary btn-sm" onclick="addReceita()">Confirmar</button>
@@ -787,6 +800,7 @@ function monthStr(ym){const[y,m]=ym.split('-');return`${MONTHS[+m-1]} ${y}`}
   state.currentMonth=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
   document.getElementById('headerDate').textContent=now.toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'short',year:'numeric'});
   document.getElementById('dInicio').value=state.currentMonth;
+  document.getElementById('rInicio').value=state.currentMonth;
   loadLocal();renderAll();renderQuote();
   tryAutoConnect();
 })();
@@ -853,8 +867,49 @@ window.changeMonth=function(dir){
   const[y,m]=state.currentMonth.split('-').map(Number);
   const d=new Date(y,m-1+dir,1);
   state.currentMonth=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+  autoPopularFixos();
   renderAll();
 };
+
+function autoPopularFixos(){
+  const cur=state.currentMonth;
+  // Pega todos os meses anteriores ordenados
+  const mesesAnteriores=Object.keys(state.despesas).filter(k=>k<cur).sort();
+  if(!mesesAnteriores.length)return;
+  const jaExiste=state.despesas[cur]||[];
+
+  // Coleta todas as despesas fixas de todos os meses anteriores que ainda valem
+  const fixasParaAdicionar=[];
+  mesesAnteriores.forEach(mesKey=>{
+    (state.despesas[mesKey]||[]).forEach(d=>{
+      if(d.tipo!=='fixo')return;
+      if(d.termino && d.termino < cur)return;
+      if(jaExiste.some(e=>e.nome===d.nome&&Math.abs(e.valor-d.valor)<0.01))return;
+      if(fixasParaAdicionar.some(e=>e.nome===d.nome&&Math.abs(e.valor-d.valor)<0.01))return;
+      fixasParaAdicionar.push(d);
+    });
+  });
+
+  // Faz o mesmo para receitas fixas
+  const recFixasParaAdicionar=[];
+  const jaExisteRec=state.receitas[cur]||[];
+  Object.keys(state.receitas).filter(k=>k<cur).sort().forEach(mesKey=>{
+    (state.receitas[mesKey]||[]).forEach(r=>{
+      if(r.tipo!=='fixo')return;
+      if(r.termino && r.termino < cur)return;
+      if(jaExisteRec.some(e=>e.nome===r.nome&&Math.abs(e.valor-r.valor)<0.01))return;
+      if(recFixasParaAdicionar.some(e=>e.nome===r.nome&&Math.abs(e.valor-r.valor)<0.01))return;
+      recFixasParaAdicionar.push(r);
+    });
+  });
+
+  if(!fixasParaAdicionar.length && !recFixasParaAdicionar.length)return;
+  if(!state.despesas[cur])state.despesas[cur]=[];
+  if(!state.receitas[cur])state.receitas[cur]=[];
+  fixasParaAdicionar.forEach(d=>state.despesas[cur].push({...d,id:uid(),inicio:cur}));
+  recFixasParaAdicionar.forEach(r=>state.receitas[cur].push({...r,id:uid(),inicio:cur}));
+  saveData();
+}
 
 // DRAWERS
 window.toggleDrawer=function(id){const el=document.getElementById(id);el.style.display=el.style.display==='none'?'block':'none'};
@@ -896,15 +951,36 @@ window.addDespesa=function(){
 window.removeDespesa=function(key,id){state.despesas[key]=(state.despesas[key]||[]).filter(d=>d.id!==id);saveData();renderAll();toast('Removido')};
 
 // RECEITAS
+window.toggleParcR=function(){document.getElementById('rParcWrap').style.opacity=document.getElementById('rTipo').value==='parcelado'?'1':'0.4'};
+
 window.addReceita=function(){
   const nome=document.getElementById('rNome').value.trim();
   const valor=parseFloat(document.getElementById('rValor').value);
+  const tipo=document.getElementById('rTipo').value;
+  const parcelas=parseInt(document.getElementById('rParcelas').value)||1;
+  const inicio=document.getElementById('rInicio').value||state.currentMonth;
+  const termino=document.getElementById('rTermino').value||null;
   if(!nome||isNaN(valor)||valor<=0){toast('⚠ Preencha nome e valor');return}
-  if(!state.receitas[state.currentMonth])state.receitas[state.currentMonth]=[];
-  state.receitas[state.currentMonth].push({id:uid(),nome,valor});
+  if(tipo==='parcelado'){
+    const[y,m]=inicio.split('-').map(Number);
+    const fimAuto=new Date(y,m-1+parcelas-1,1);
+    const terminoFinal=`${fimAuto.getFullYear()}-${String(fimAuto.getMonth()+1).padStart(2,'0')}`;
+    for(let i=0;i<parcelas;i++){
+      const d=new Date(y,m-1+i,1);
+      const key=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+      if(!state.receitas[key])state.receitas[key]=[];
+      state.receitas[key].push({id:uid(),nome,valor,tipo,parcelas,inicio,termino:terminoFinal,parcelaAtual:i+1});
+    }
+    toast(`✓ ${parcelas}x parcelas adicionadas`);
+  }else{
+    if(!state.receitas[state.currentMonth])state.receitas[state.currentMonth]=[];
+    state.receitas[state.currentMonth].push({id:uid(),nome,valor,tipo,parcelas:1,inicio,termino,parcelaAtual:1});
+    toast('✓ Receita adicionada');
+  }
   saveData();renderAll();
   document.getElementById('rNome').value='';document.getElementById('rValor').value='';
-  toggleDrawer('drawerRec');toast('✓ Receita adicionada');
+  document.getElementById('rTermino').value='';
+  toggleDrawer('drawerRec');
 };
 window.removeReceita=function(key,id){state.receitas[key]=(state.receitas[key]||[]).filter(r=>r.id!==id);saveData();renderAll();toast('Removido')};
 
@@ -985,7 +1061,7 @@ function renderReceitas(){
         <div class="li-line income"></div>
         <div class="li-info">
           <div class="li-name">${r.nome}</div>
-          <div class="li-meta"><span class="tag tag-green">receita</span></div>
+          <div class="li-meta">${r.tipo==='parcelado'?`<span class="tag tag-blue">${r.parcelaAtual}/${r.parcelas}x</span>`:`<span class="tag tag-green">${r.tipo||'receita'}</span>`}${r.termino?` <span style="color:#6B7080;font-size:10px">até ${r.termino}</span>`:''}</div>
         </div>
         <span class="li-amount income">${fmt(r.valor)}</span>
         <button class="btn btn-danger btn-sm" onclick="removeReceita('${key}','${r.id}')">✕</button>

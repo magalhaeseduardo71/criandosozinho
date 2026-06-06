@@ -211,6 +211,29 @@ select option{background:var(--bg2)}
 #toast{position:fixed;bottom:24px;right:24px;z-index:999;background:var(--bg3);border:1px solid var(--line2);border-radius:var(--r2);padding:10px 16px;font-size:12px;font-family:var(--mono);color:var(--text);transform:translateY(12px);opacity:0;transition:all .25s;pointer-events:none}
 #toast.show{transform:translateY(0);opacity:1}
 
+/* ── LOCK SCREEN ── */
+#lockScreen{position:fixed;inset:0;background:var(--bg);z-index:10000;display:flex;align-items:center;justify-content:center;flex-direction:column}
+#lockScreen .lock-box{display:flex;flex-direction:column;align-items:center;gap:20px;width:100%;max-width:300px;padding:20px}
+#lockScreen .lock-brand{font-family:var(--mono);font-size:22px;font-weight:500;color:var(--white);letter-spacing:-0.5px}
+#lockScreen .lock-brand em{color:var(--acc);font-style:normal}
+#lockScreen .lock-title{font-family:var(--mono);font-size:12px;color:var(--muted);letter-spacing:1px;text-transform:uppercase}
+#lockScreen .pin-dots{display:flex;gap:14px;justify-content:center}
+#lockScreen .pin-dot{width:14px;height:14px;border-radius:50%;border:2px solid var(--faint);background:transparent;transition:all .15s}
+#lockScreen .pin-dot.filled{background:var(--acc);border-color:var(--acc)}
+#lockScreen .pin-dot.error{background:var(--warn);border-color:var(--warn)}
+#lockScreen .pin-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;width:100%}
+#lockScreen .pin-key{background:var(--bg2);border:1px solid var(--line);border-radius:var(--r);height:62px;font-size:20px;font-family:var(--mono);color:var(--white);cursor:pointer;transition:all .15s;display:flex;align-items:center;justify-content:center;user-select:none}
+#lockScreen .pin-key:hover{background:var(--bg3);border-color:var(--line2)}
+#lockScreen .pin-key:active{transform:scale(.95)}
+#lockScreen .pin-key.key-del{font-size:16px;color:var(--muted)}
+#lockScreen .pin-key.key-bio{font-size:22px}
+#lockScreen .lock-error{font-size:12px;font-family:var(--mono);color:var(--warn);min-height:18px;text-align:center}
+#lockScreen .bio-btn{display:flex;align-items:center;gap:8px;background:transparent;border:1px solid var(--line2);color:var(--acc2);padding:10px 20px;border-radius:var(--r2);font-family:var(--mono);font-size:12px;cursor:pointer;transition:all .15s;width:100%;justify-content:center}
+#lockScreen .bio-btn:hover{border-color:var(--acc2);background:rgba(93,212,240,.05)}
+#lockScreen .setup-area{text-align:center;font-size:12px;color:var(--muted);line-height:1.8}
+#lockScreen .setup-area strong{color:var(--text);display:block;margin-bottom:4px;font-size:14px}
+#lockScreen .setup-btn{margin-top:8px;background:var(--acc);color:#050F08;border:none;padding:10px 32px;border-radius:var(--r2);font-family:var(--sans);font-size:13px;font-weight:500;cursor:pointer}
+
 /* ── RESPONSIVE ── */
 @media(max-width:700px){
   .shell{grid-template-columns:1fr}
@@ -478,6 +501,14 @@ select option{background:var(--bg2)}
   appId: "1:563558887717:web:09198ce6660c084a21aacc"
 };</textarea>
 
+
+<!-- ── LOCK SCREEN ── -->
+<div id="lockScreen">
+  <div class="lock-box" id="lockBox">
+    <!-- conteúdo gerado por JS -->
+  </div>
+</div>
+
 <!-- ── FIREBASE MODAL ── -->
 <div id="fbModal" class="fb-modal-bg" style="display:none" onclick="if(event.target===this)closeFbModal()">
   <div class="fb-modal">
@@ -556,6 +587,259 @@ function fmt(n){return 'R$ '+(+n).toLocaleString('pt-BR',{minimumFractionDigits:
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2500)}
 function monthStr(ym){const[y,m]=ym.split('-');return`${MONTHS[+m-1]} ${y}`}
+
+
+// ══════════════════════════════════════════
+// LOCK / PIN / BIOMETRIA
+// ══════════════════════════════════════════
+const LOCK_KEY   = 'finvault_pin';
+const BIO_KEY    = 'finvault_bio_enabled';
+const SESSION_KEY= 'finvault_unlocked';
+
+let lockPin     = '';   // PIN digitado agora
+let setupStep   = 0;    // 0=nenhum, 1=primeiro dígito, 2=confirmação
+let setupFirst  = '';   // PIN digitado na 1ª etapa do setup
+let bioEnabled  = false;
+
+function getStoredPin(){ return localStorage.getItem(LOCK_KEY)||null; }
+function isSessionUnlocked(){ return sessionStorage.getItem(SESSION_KEY)==='1'; }
+function setSessionUnlocked(){ sessionStorage.setItem(SESSION_KEY,'1'); }
+
+function renderLockSetup(){
+  const box = document.getElementById('lockBox');
+  box.innerHTML = `
+    <div class="lock-brand">Fin<em>Vault</em></div>
+    <div class="setup-area">
+      <strong>Defina seu PIN de 4 dígitos</strong>
+      Ele será pedido toda vez que você abrir o app.
+    </div>
+    <div class="pin-dots">
+      <div class="pin-dot" id="sd0"></div>
+      <div class="pin-dot" id="sd1"></div>
+      <div class="pin-dot" id="sd2"></div>
+      <div class="pin-dot" id="sd3"></div>
+    </div>
+    <div class="lock-error" id="setupErr"></div>
+    <div class="pin-grid" id="setupGrid"></div>
+  `;
+  renderPinGrid('setupGrid', pressSetupKey);
+}
+
+function renderLockConfirm(){
+  const box = document.getElementById('lockBox');
+  box.innerHTML = `
+    <div class="lock-brand">Fin<em>Vault</em></div>
+    <div class="setup-area">
+      <strong>Confirme seu PIN</strong>
+      Digite o mesmo PIN novamente.
+    </div>
+    <div class="pin-dots">
+      <div class="pin-dot" id="sd0"></div>
+      <div class="pin-dot" id="sd1"></div>
+      <div class="pin-dot" id="sd2"></div>
+      <div class="pin-dot" id="sd3"></div>
+    </div>
+    <div class="lock-error" id="setupErr"></div>
+    <div class="pin-grid" id="setupGrid"></div>
+  `;
+  renderPinGrid('setupGrid', pressConfirmKey);
+}
+
+function renderLockScreen(){
+  const box = document.getElementById('lockBox');
+  const hasBio = localStorage.getItem(BIO_KEY)==='1';
+  box.innerHTML = `
+    <div class="lock-brand">Fin<em>Vault</em></div>
+    <div class="lock-title">Digite seu PIN</div>
+    <div class="pin-dots">
+      <div class="pin-dot" id="ld0"></div>
+      <div class="pin-dot" id="ld1"></div>
+      <div class="pin-dot" id="ld2"></div>
+      <div class="pin-dot" id="ld3"></div>
+    </div>
+    <div class="lock-error" id="lockErr"></div>
+    <div class="pin-grid" id="lockGrid"></div>
+    ${hasBio ? `<button class="bio-btn" onclick="tryBiometria()">🪪 Usar digital / Face ID</button>` : ''}
+  `;
+  renderPinGrid('lockGrid', pressLockKey);
+  lockPin = '';
+  if(hasBio) tryBiometria();
+}
+
+function renderPinGrid(containerId, handler){
+  const grid = document.getElementById(containerId);
+  const keys = ['1','2','3','4','5','6','7','8','9','','0','⌫'];
+  grid.innerHTML = keys.map(k => {
+    if(k==='') return `<div></div>`;
+    if(k==='⌫') return `<button class="pin-key key-del" onclick="${handler.name}('del')">${k}</button>`;
+    return `<button class="pin-key" onclick="${handler.name}('${k}')">${k}</button>`;
+  }).join('');
+}
+
+// ── SETUP ──
+window.pressSetupKey = function(k){
+  if(k==='del'){ setupFirst=setupFirst.slice(0,-1); updateSetupDots(); return; }
+  if(setupFirst.length>=4) return;
+  setupFirst += k;
+  updateSetupDots();
+  if(setupFirst.length===4){ setTimeout(()=>{ setupStep=2; lockPin=''; renderLockConfirm(); },200); }
+};
+
+window.pressConfirmKey = function(k){
+  if(k==='del'){ lockPin=lockPin.slice(0,-1); updateSetupDots(); return; }
+  if(lockPin.length>=4) return;
+  lockPin += k;
+  updateSetupDots();
+  if(lockPin.length===4){
+    if(lockPin===setupFirst){
+      localStorage.setItem(LOCK_KEY, lockPin);
+      offerBiometria();
+    } else {
+      document.getElementById('setupErr').textContent='PINs diferentes. Tente de novo.';
+      setTimeout(()=>{ lockPin=''; setupFirst=''; setupStep=1; renderLockSetup(); },900);
+    }
+  }
+};
+
+function updateSetupDots(){
+  const val = setupStep===2 ? lockPin : setupFirst;
+  for(let i=0;i<4;i++){
+    const d=document.getElementById('sd'+i);
+    if(d) d.classList.toggle('filled', i<val.length);
+  }
+}
+
+// ── UNLOCK ──
+window.pressLockKey = function(k){
+  if(k==='del'){ lockPin=lockPin.slice(0,-1); updateLockDots(); return; }
+  if(lockPin.length>=4) return;
+  lockPin += k;
+  updateLockDots();
+  if(lockPin.length===4) checkPin();
+};
+
+function updateLockDots(){
+  for(let i=0;i<4;i++){
+    const d=document.getElementById('ld'+i);
+    if(d) d.classList.toggle('filled', i<lockPin.length);
+  }
+}
+
+function checkPin(){
+  const stored = getStoredPin();
+  if(lockPin===stored){
+    unlock();
+  } else {
+    for(let i=0;i<4;i++){
+      const d=document.getElementById('ld'+i);
+      if(d){ d.classList.remove('filled'); d.classList.add('error'); }
+    }
+    const err=document.getElementById('lockErr');
+    if(err) err.textContent='PIN incorreto';
+    setTimeout(()=>{
+      lockPin='';
+      for(let i=0;i<4;i++){
+        const d=document.getElementById('ld'+i);
+        if(d){ d.classList.remove('error'); }
+      }
+      if(err) err.textContent='';
+    },700);
+  }
+}
+
+function unlock(){
+  setSessionUnlocked();
+  const ls=document.getElementById('lockScreen');
+  ls.style.opacity='0';
+  ls.style.transition='opacity .3s';
+  setTimeout(()=>{ ls.style.display='none'; ls.style.opacity=''; ls.style.transition=''; },300);
+}
+
+// ── BIOMETRIA ──
+async function offerBiometria(){
+  const box=document.getElementById('lockBox');
+  box.innerHTML=`
+    <div class="lock-brand">Fin<em>Vault</em></div>
+    <div class="setup-area">
+      <strong>PIN criado! ✓</strong>
+      Quer usar digital ou Face ID para entrar mais rápido?
+    </div>
+    <button class="bio-btn" onclick="enableBio()">🪪 Ativar biometria</button>
+    <button class="bio-btn" style="color:var(--muted);border-color:var(--line)" onclick="unlock()">Não, só PIN</button>
+  `;
+}
+
+window.enableBio = async function(){
+  const ok = await tryRegisterBio();
+  if(ok){
+    localStorage.setItem(BIO_KEY,'1');
+    unlock();
+  } else {
+    unlock();
+  }
+};
+
+async function tryRegisterBio(){
+  if(!window.PublicKeyCredential) return false;
+  try{
+    const challenge = new Uint8Array(32);
+    crypto.getRandomValues(challenge);
+    const cred = await navigator.credentials.create({
+      publicKey:{
+        challenge,
+        rp:{name:'FinVault',id:location.hostname||'localhost'},
+        user:{id:new Uint8Array(16),name:'finvault-user',displayName:'FinVault'},
+        pubKeyCredParams:[{type:'public-key',alg:-7},{type:'public-key',alg:-257}],
+        authenticatorSelection:{userVerification:'required'},
+        timeout:30000
+      }
+    });
+    if(cred){
+      localStorage.setItem('finvault_bio_id', btoa(String.fromCharCode(...new Uint8Array(cred.rawId))));
+      return true;
+    }
+  }catch(e){}
+  return false;
+}
+
+window.tryBiometria = async function(){
+  if(!window.PublicKeyCredential) return;
+  try{
+    const challenge = new Uint8Array(32);
+    crypto.getRandomValues(challenge);
+    const storedId = localStorage.getItem('finvault_bio_id');
+    const allowCreds = storedId ? [{
+      id: Uint8Array.from(atob(storedId), c=>c.charCodeAt(0)),
+      type:'public-key'
+    }] : [];
+    const assertion = await navigator.credentials.get({
+      publicKey:{
+        challenge,
+        allowCredentials: allowCreds,
+        userVerification:'required',
+        timeout:30000
+      }
+    });
+    if(assertion) unlock();
+  }catch(e){}
+};
+
+// ── INIT LOCK ──
+function initLock(){
+  const stored = getStoredPin();
+  if(!stored){
+    setupStep=1; setupFirst=''; lockPin='';
+    renderLockSetup();
+  } else if(isSessionUnlocked()){
+    document.getElementById('lockScreen').style.display='none';
+  } else {
+    lockPin='';
+    renderLockScreen();
+  }
+}
+
+initLock();
+// ══════════════════════════════════════════
 
 // INIT
 (function(){

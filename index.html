@@ -523,6 +523,191 @@ select option{background:var(--bg2)}
   </div>
 </div>
 
+<script>
+// ══ LOCK / PIN / BIOMETRIA ══
+var LOCK_KEY = 'finvault_pin';
+var BIO_KEY  = 'finvault_bio_enabled';
+var lockPin  = '';
+var setupStep= 0;
+var setupFirst='';
+
+function fvGetPin(){ return localStorage.getItem(LOCK_KEY)||null; }
+
+function fvRenderSetup(){
+  lockPin=''; setupFirst='';
+  document.getElementById('lockBox').innerHTML =
+    '<div class="lock-brand">Fin<em>Vault</em></div>'+
+    '<div class="setup-area"><strong>Defina seu PIN de 4 dígitos</strong>Ele será pedido toda vez que abrir o app.</div>'+
+    '<div class="pin-dots" id="pinDots"></div>'+
+    '<div class="lock-error" id="lockErr"></div>'+
+    '<div class="pin-grid" id="pinGrid"></div>';
+  fvBuildDots(); fvBuildGrid(fvSetupKey);
+}
+
+function fvRenderConfirm(){
+  lockPin='';
+  document.getElementById('lockBox').innerHTML =
+    '<div class="lock-brand">Fin<em>Vault</em></div>'+
+    '<div class="setup-area"><strong>Confirme seu PIN</strong>Digite o mesmo PIN novamente.</div>'+
+    '<div class="pin-dots" id="pinDots"></div>'+
+    '<div class="lock-error" id="lockErr"></div>'+
+    '<div class="pin-grid" id="pinGrid"></div>';
+  fvBuildDots(); fvBuildGrid(fvConfirmKey);
+}
+
+function fvRenderLock(){
+  lockPin='';
+  var hasBio = localStorage.getItem(BIO_KEY)==='1';
+  document.getElementById('lockBox').innerHTML =
+    '<div class="lock-brand">Fin<em>Vault</em></div>'+
+    '<div class="lock-title">Digite seu PIN</div>'+
+    '<div class="pin-dots" id="pinDots"></div>'+
+    '<div class="lock-error" id="lockErr"></div>'+
+    '<div class="pin-grid" id="pinGrid"></div>'+
+    (hasBio ? '<button class="bio-btn" id="bioBtn">🪪 Usar digital / Face ID</button>' : '');
+  fvBuildDots(); fvBuildGrid(fvUnlockKey);
+  if(hasBio){
+    document.getElementById('bioBtn').addEventListener('click', fvTryBio);
+    fvTryBio();
+  }
+}
+
+function fvRenderOfferBio(){
+  var box = document.getElementById('lockBox');
+  box.innerHTML =
+    '<div class="lock-brand">Fin<em>Vault</em></div>'+
+    '<div class="setup-area"><strong>PIN criado! ✓</strong>Quer usar digital ou Face ID para entrar mais rápido?</div>'+
+    '<button class="bio-btn" id="bioYes">🪪 Ativar biometria</button>'+
+    '<button class="bio-btn" id="bioNo" style="color:var(--muted);border-color:var(--line)">Não, só PIN</button>';
+  document.getElementById('bioYes').addEventListener('click', fvEnableBio);
+  document.getElementById('bioNo').addEventListener('click', fvUnlock);
+}
+
+function fvBuildDots(){
+  var wrap = document.getElementById('pinDots');
+  wrap.innerHTML='';
+  for(var i=0;i<4;i++){
+    var d=document.createElement('div');
+    d.className='pin-dot'; d.id='dot'+i;
+    wrap.appendChild(d);
+  }
+}
+
+function fvBuildGrid(handler){
+  var grid = document.getElementById('pinGrid');
+  grid.innerHTML='';
+  var keys=['1','2','3','4','5','6','7','8','9','','0','⌫'];
+  keys.forEach(function(k){
+    if(k===''){grid.appendChild(document.createElement('div'));return;}
+    var btn=document.createElement('button');
+    btn.className='pin-key'+(k==='⌫'?' key-del':'');
+    btn.textContent=k;
+    (function(key){
+      btn.addEventListener('touchstart',function(e){e.preventDefault();handler(key==='⌫'?'del':key);},{passive:false});
+      btn.addEventListener('click',function(){handler(key==='⌫'?'del':key);});
+    })(k);
+    grid.appendChild(btn);
+  });
+}
+
+function fvUpdateDots(val){
+  for(var i=0;i<4;i++){
+    var d=document.getElementById('dot'+i);
+    if(!d)return;
+    d.classList.remove('error');
+    if(i<val.length) d.classList.add('filled');
+    else d.classList.remove('filled');
+  }
+}
+
+function fvErr(msg){ var e=document.getElementById('lockErr'); if(e) e.textContent=msg; }
+
+function fvSetupKey(k){
+  if(k==='del'){setupFirst=setupFirst.slice(0,-1);fvUpdateDots(setupFirst);return;}
+  if(setupFirst.length>=4)return;
+  setupFirst+=k; fvUpdateDots(setupFirst);
+  if(setupFirst.length===4){setTimeout(function(){setupStep=2;fvRenderConfirm();},200);}
+}
+
+function fvConfirmKey(k){
+  if(k==='del'){lockPin=lockPin.slice(0,-1);fvUpdateDots(lockPin);return;}
+  if(lockPin.length>=4)return;
+  lockPin+=k; fvUpdateDots(lockPin);
+  if(lockPin.length===4){
+    if(lockPin===setupFirst){
+      localStorage.setItem(LOCK_KEY,lockPin);
+      fvRenderOfferBio();
+    } else {
+      fvErr('PINs diferentes. Tente de novo.');
+      for(var i=0;i<4;i++){var d=document.getElementById('dot'+i);if(d)d.classList.add('error');}
+      setTimeout(function(){setupStep=1;fvRenderSetup();},900);
+    }
+  }
+}
+
+function fvUnlockKey(k){
+  if(k==='del'){lockPin=lockPin.slice(0,-1);fvUpdateDots(lockPin);return;}
+  if(lockPin.length>=4)return;
+  lockPin+=k; fvUpdateDots(lockPin);
+  if(lockPin.length===4) fvCheckPin();
+}
+
+function fvCheckPin(){
+  if(lockPin===fvGetPin()){
+    fvUnlock();
+  } else {
+    for(var i=0;i<4;i++){var d=document.getElementById('dot'+i);if(d){d.classList.remove('filled');d.classList.add('error');}}
+    fvErr('PIN incorreto');
+    setTimeout(function(){lockPin='';fvRenderLock();},800);
+  }
+}
+
+function fvUnlock(){
+  var ls=document.getElementById('lockScreen');
+  ls.style.opacity='0'; ls.style.transition='opacity .3s';
+  setTimeout(function(){ls.style.display='none';ls.style.opacity='';ls.style.transition='';},300);
+}
+
+function fvEnableBio(){
+  fvRegisterBio().then(function(ok){
+    if(ok) localStorage.setItem(BIO_KEY,'1');
+    fvUnlock();
+  });
+}
+
+function fvRegisterBio(){
+  if(!window.PublicKeyCredential) return Promise.resolve(false);
+  var challenge=new Uint8Array(32); crypto.getRandomValues(challenge);
+  return navigator.credentials.create({publicKey:{
+    challenge:challenge,
+    rp:{name:'FinVault',id:location.hostname||'localhost'},
+    user:{id:new Uint8Array(16),name:'finvault-user',displayName:'FinVault'},
+    pubKeyCredParams:[{type:'public-key',alg:-7},{type:'public-key',alg:-257}],
+    authenticatorSelection:{userVerification:'required'},timeout:30000
+  }}).then(function(cred){
+    if(cred){localStorage.setItem('finvault_bio_id',btoa(String.fromCharCode.apply(null,new Uint8Array(cred.rawId))));}
+    return true;
+  }).catch(function(){return false;});
+}
+
+function fvTryBio(){
+  if(!window.PublicKeyCredential) return;
+  var challenge=new Uint8Array(32); crypto.getRandomValues(challenge);
+  var storedId=localStorage.getItem('finvault_bio_id');
+  var allowCreds=storedId?[{id:Uint8Array.from(atob(storedId),function(c){return c.charCodeAt(0);}),type:'public-key'}]:[];
+  navigator.credentials.get({publicKey:{
+    challenge:challenge,allowCredentials:allowCreds,userVerification:'required',timeout:30000
+  }}).then(function(a){if(a)fvUnlock();}).catch(function(){});
+}
+
+function fvInitLock(){
+  if(!fvGetPin()){setupStep=1;fvRenderSetup();}
+  else{fvRenderLock();}
+}
+
+document.addEventListener('DOMContentLoaded', fvInitLock);
+</script>
+
 <script type="module">
 const QUOTES=[
   {text:"Pague-se primeiro. Antes de pagar qualquer conta, reserve uma parte para você mesmo.",author:"Pai Rico, Pai Pobre — Robert Kiyosaki"},
@@ -588,231 +773,6 @@ function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2500)}
 function monthStr(ym){const[y,m]=ym.split('-');return`${MONTHS[+m-1]} ${y}`}
 
-
-// ══════════════════════════════════════════
-// LOCK / PIN / BIOMETRIA
-// ══════════════════════════════════════════
-const LOCK_KEY = 'finvault_pin';
-const BIO_KEY  = 'finvault_bio_enabled';
-
-let lockPin    = '';
-let setupStep  = 0;
-let setupFirst = '';
-
-function getStoredPin(){ return localStorage.getItem(LOCK_KEY)||null; }
-
-// ── RENDERIZAÇÃO ──
-function renderLockSetup(){
-  lockPin=''; setupFirst='';
-  const box = document.getElementById('lockBox');
-  box.innerHTML = `
-    <div class="lock-brand">Fin<em>Vault</em></div>
-    <div class="setup-area"><strong>Defina seu PIN de 4 dígitos</strong>Ele será pedido toda vez que abrir o app.</div>
-    <div class="pin-dots" id="pinDots"></div>
-    <div class="lock-error" id="lockErr"></div>
-    <div class="pin-grid" id="pinGrid"></div>
-  `;
-  buildDots(4,'pinDots');
-  buildGrid('pinGrid', handleSetupKey);
-}
-
-function renderLockConfirm(){
-  lockPin='';
-  const box = document.getElementById('lockBox');
-  box.innerHTML = `
-    <div class="lock-brand">Fin<em>Vault</em></div>
-    <div class="setup-area"><strong>Confirme seu PIN</strong>Digite o mesmo PIN novamente.</div>
-    <div class="pin-dots" id="pinDots"></div>
-    <div class="lock-error" id="lockErr"></div>
-    <div class="pin-grid" id="pinGrid"></div>
-  `;
-  buildDots(4,'pinDots');
-  buildGrid('pinGrid', handleConfirmKey);
-}
-
-function renderLockScreen(){
-  lockPin='';
-  const hasBio = localStorage.getItem(BIO_KEY)==='1';
-  const box = document.getElementById('lockBox');
-  box.innerHTML = `
-    <div class="lock-brand">Fin<em>Vault</em></div>
-    <div class="lock-title">Digite seu PIN</div>
-    <div class="pin-dots" id="pinDots"></div>
-    <div class="lock-error" id="lockErr"></div>
-    <div class="pin-grid" id="pinGrid"></div>
-  `;
-  buildDots(4,'pinDots');
-  buildGrid('pinGrid', handleUnlockKey);
-  if(hasBio){
-    const bioBtn = document.createElement('button');
-    bioBtn.className='bio-btn';
-    bioBtn.textContent='🪪 Usar digital / Face ID';
-    bioBtn.addEventListener('click', tryBiometria);
-    document.getElementById('lockBox').appendChild(bioBtn);
-    tryBiometria();
-  }
-}
-
-function renderOfferBio(){
-  const box = document.getElementById('lockBox');
-  box.innerHTML = `
-    <div class="lock-brand">Fin<em>Vault</em></div>
-    <div class="setup-area"><strong>PIN criado! ✓</strong>Quer usar digital ou Face ID para entrar mais rápido?</div>
-  `;
-  const b1 = document.createElement('button');
-  b1.className='bio-btn'; b1.textContent='🪪 Ativar biometria';
-  b1.addEventListener('click', enableBio);
-  const b2 = document.createElement('button');
-  b2.className='bio-btn'; b2.style.cssText='color:var(--muted);border-color:var(--line)';
-  b2.textContent='Não, só PIN';
-  b2.addEventListener('click', unlock);
-  box.appendChild(b1); box.appendChild(b2);
-}
-
-// ── CONSTRUTORES ──
-function buildDots(n, containerId){
-  const wrap = document.getElementById(containerId);
-  wrap.innerHTML='';
-  for(let i=0;i<n;i++){
-    const d=document.createElement('div');
-    d.className='pin-dot'; d.id='dot'+i;
-    wrap.appendChild(d);
-  }
-}
-
-let _currentGridHandler = null;
-
-function buildGrid(containerId, handler){
-  _currentGridHandler = handler;
-  const grid = document.getElementById(containerId);
-  grid.innerHTML='';
-  const keys = ['1','2','3','4','5','6','7','8','9','','0','⌫'];
-  keys.forEach(k => {
-    if(k===''){
-      const empty=document.createElement('div'); grid.appendChild(empty); return;
-    }
-    const btn = document.createElement('button');
-    btn.className = 'pin-key' + (k==='⌫' ? ' key-del' : '');
-    btn.textContent = k;
-    btn.setAttribute('data-key', k==='⌫'?'del':k);
-    grid.appendChild(btn);
-  });
-  // delegação no container — funciona em qualquer dispositivo
-  grid.addEventListener('touchstart', e=>{
-    const btn = e.target.closest('[data-key]');
-    if(!btn) return;
-    e.preventDefault();
-    _currentGridHandler(btn.getAttribute('data-key'));
-  }, {passive:false});
-  grid.addEventListener('click', e=>{
-    const btn = e.target.closest('[data-key]');
-    if(!btn) return;
-    _currentGridHandler(btn.getAttribute('data-key'));
-  });
-}
-
-function updateDots(val){
-  for(let i=0;i<4;i++){
-    const d=document.getElementById('dot'+i);
-    if(d){ d.classList.remove('error'); d.classList.toggle('filled', i<val.length); }
-  }
-}
-
-function showErr(msg){
-  const e=document.getElementById('lockErr');
-  if(e) e.textContent=msg;
-}
-
-// ── HANDLERS ──
-function handleSetupKey(k){
-  if(k==='del'){ setupFirst=setupFirst.slice(0,-1); updateDots(setupFirst); return; }
-  if(setupFirst.length>=4) return;
-  setupFirst+=k; updateDots(setupFirst);
-  if(setupFirst.length===4){ setTimeout(()=>{ setupStep=2; renderLockConfirm(); },200); }
-}
-
-function handleConfirmKey(k){
-  if(k==='del'){ lockPin=lockPin.slice(0,-1); updateDots(lockPin); return; }
-  if(lockPin.length>=4) return;
-  lockPin+=k; updateDots(lockPin);
-  if(lockPin.length===4){
-    if(lockPin===setupFirst){
-      localStorage.setItem(LOCK_KEY, lockPin);
-      renderOfferBio();
-    } else {
-      showErr('PINs diferentes. Tente de novo.');
-      for(let i=0;i<4;i++){ const d=document.getElementById('dot'+i); if(d) d.classList.add('error'); }
-      setTimeout(()=>{ setupStep=1; renderLockSetup(); },900);
-    }
-  }
-}
-
-function handleUnlockKey(k){
-  if(k==='del'){ lockPin=lockPin.slice(0,-1); updateDots(lockPin); return; }
-  if(lockPin.length>=4) return;
-  lockPin+=k; updateDots(lockPin);
-  if(lockPin.length===4) checkPin();
-}
-
-function checkPin(){
-  if(lockPin===getStoredPin()){
-    unlock();
-  } else {
-    for(let i=0;i<4;i++){ const d=document.getElementById('dot'+i); if(d){ d.classList.remove('filled'); d.classList.add('error'); }}
-    showErr('PIN incorreto');
-    setTimeout(()=>{ lockPin=''; renderLockScreen(); },800);
-  }
-}
-
-function unlock(){
-  const ls=document.getElementById('lockScreen');
-  ls.style.opacity='0'; ls.style.transition='opacity .3s';
-  setTimeout(()=>{ ls.style.display='none'; ls.style.opacity=''; ls.style.transition=''; },300);
-}
-
-// ── BIOMETRIA ──
-async function enableBio(){
-  const ok = await tryRegisterBio();
-  if(ok) localStorage.setItem(BIO_KEY,'1');
-  unlock();
-}
-
-async function tryRegisterBio(){
-  if(!window.PublicKeyCredential) return false;
-  try{
-    const challenge=new Uint8Array(32); crypto.getRandomValues(challenge);
-    const cred = await navigator.credentials.create({publicKey:{
-      challenge,
-      rp:{name:'FinVault',id:location.hostname||'localhost'},
-      user:{id:new Uint8Array(16),name:'finvault-user',displayName:'FinVault'},
-      pubKeyCredParams:[{type:'public-key',alg:-7},{type:'public-key',alg:-257}],
-      authenticatorSelection:{userVerification:'required'},timeout:30000
-    }});
-    if(cred){ localStorage.setItem('finvault_bio_id', btoa(String.fromCharCode(...new Uint8Array(cred.rawId)))); return true; }
-  }catch(e){}
-  return false;
-}
-
-async function tryBiometria(){
-  if(!window.PublicKeyCredential) return;
-  try{
-    const challenge=new Uint8Array(32); crypto.getRandomValues(challenge);
-    const storedId=localStorage.getItem('finvault_bio_id');
-    const allowCreds=storedId?[{id:Uint8Array.from(atob(storedId),c=>c.charCodeAt(0)),type:'public-key'}]:[];
-    const assertion=await navigator.credentials.get({publicKey:{challenge,allowCredentials:allowCreds,userVerification:'required',timeout:30000}});
-    if(assertion) unlock();
-  }catch(e){}
-}
-
-// ── INIT LOCK ──
-function initLock(){
-  const stored=getStoredPin();
-  if(!stored){ setupStep=1; renderLockSetup(); }
-  else { renderLockScreen(); }
-}
-
-initLock();
-// ══════════════════════════════════════════
 
 // INIT
 (function(){
